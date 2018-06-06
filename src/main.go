@@ -1,20 +1,23 @@
 package main
 
 import (
-	"log"
+	"fmt"
+	"io/ioutil"
 	"net/http"
-	"github.com/gorilla/mux"
-	"endpoint"
+	"weboscket_dispatcher"
 )
 
 func main() {
-	router := mux.NewRouter()
-	addHandlersToRouter(router);
-	log.Fatal(http.ListenAndServe(":8080", router))
+	http.HandleFunc("/ws", weboscket_dispatcher.WsHandler)
+	http.HandleFunc("/", rootHandler)
+
+	panic(http.ListenAndServe(":8080", nil))
 }
 
-func addHandlersToRouter(router *mux.Router) {
-	router.HandleFunc("/login/{name}", endpoint.HandleLogin).Methods("GET")
-	router.HandleFunc("/logout/{name}", endpoint.HandleLogout).Methods("GET")
-	router.HandleFunc("/game", endpoint.GetOpenGame).Methods("GET")
+func rootHandler(w http.ResponseWriter, r *http.Request) {
+	content, err := ioutil.ReadFile("index.html")
+	if err != nil {
+		fmt.Println("Could not open file.", err)
+	}
+	fmt.Fprintf(w, "%s", content)
 }
