@@ -6,9 +6,17 @@
 
 <div>
     <form>
-        <label for="numberfield">Number</label>
-        <input type="text" id="numberfield" placeholder="12"/><br/>
-        <button type="button" id="sendBtn">Send</button>
+        <label>
+            Subscription
+            <input type="text" id="subscription"/>
+        </label>
+        <br/>
+        <label>
+            Message
+            <input type="text" id="message"/>
+        </label>
+        <br/>
+        <button type="button" id="sendBtn">Subscribe</button>
         <button type="button" id="sendBtn2">Send</button>
     </form>
 </div>
@@ -22,7 +30,8 @@
             $("#container").append("Your browser does not support WebSockets");
             return;
         } else {
-            ws = initWS();
+            for (let i = 0; i < 100; i++)
+                ws = initWS();
         }
 
         function initWS() {
@@ -42,11 +51,13 @@
 
         $("#sendBtn").click(function (e) {
             e.preventDefault();
-            ws.send(JSON.stringify({messageType: 0, message: "test"}));
+            ws.send(JSON.stringify({messageType: 0, message: $("#subscription").val()}));
+            console.log({messageType: 0, message: $("#subscription").val()});
         });
         $("#sendBtn2").click(function (e) {
             e.preventDefault();
-            ws.send(JSON.stringify({messageType: 3, message: "test"}));
+            ws.send(JSON.stringify({messageType: 2, message: $("#message").val()}));
+            console.log({messageType: 2, message: $("#message").val()});
         });
     });
 </script>

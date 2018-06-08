@@ -4,100 +4,130 @@ import (
 	"net/http"
 	"github.com/gorilla/websocket"
 	"fmt"
+	"strconv"
+	"sync"
 )
+
+type Player struct {
+	name string
+}
+
+type Client struct {
+	conn         *websocket.Conn
+	player       *Player
+	subscription string
+	lobby        string
+	mu           sync.Mutex
+}
+
+type message struct {
+	MessageType MessageType `json:"messageType"`
+	Message     string      `json:"message"`
+}
 
 var upgrader = websocket.Upgrader{
 	Subprotocols: []string{"Sec-WebSocket-Extensions"},
 }
 
-type player struct {
-	name         string
-	subscription string
-	lobbyId      int
-	conn         *websocket.Conn
-}
-
-type message struct {
-	messageType MessageType
-	message     string
-}
-
-type lobby struct {
-	id       int
-	capacity int
-	players  []*player
-}
-
-type MessageType int
-
-const (
-	SUBSCRIBE   MessageType = 0
-	UNSUBSCRIBE MessageType = 1
-	MESSAGE     MessageType = 2
-)
-
-var connections = make(map[*websocket.Conn]*player)
-var subscriptions = make(map[string][]lobby)
+var rooms = map[string]map[string]*lobby{"main": {"0": &lobby{id: "0", capacity: -1}}}
 
 func WsHandler(w http.ResponseWriter, r *http.Request) {
 	conn, err := upgrader.Upgrade(w, r, w.Header())
-	vars := r.URL.Query()["name"][0]
 	if err != nil {
 		http.Error(w, "Could not open websocket connection", http.StatusBadRequest)
 		fmt.Println(err)
 	}
-	connections[conn] = &player{name: vars, subscription: "", conn: conn}
-	go echo(conn)
-	println(len(connections))
+	//vars := r.URL.Query()["name"]
+
+	player := &Player{name: "test"}
+	client := &Client{player: player, conn: conn, subscription: "main", lobby: "0"}
+	rooms["main"]["0"].addClient(client)
+	go echo(client)
 }
 
-func echo(conn *websocket.Conn) {
+func echo(client *Client) {
 	defer func() {
-		conn.Close()
-		delete(connections, conn)
+		client.conn.Close()
+		rooms[client.subscription][client.lobby].removeClient(client)
+		client.player = nil
+		client = nil
 		println("Connection closed")
 	}()
 
 	for {
-		var message message;
-		err := conn.ReadJSON(&message)
+		message := message{}
+		err := client.conn.ReadJSON(&message)
 		if err != nil {
-			println("Connection lost")
+			println("Error while reading message", err.Error())
 			break
 		}
 
-		p := connections[conn]
-		switch message.messageType {
+		switch message.MessageType {
 		case SUBSCRIBE:
-			if p.subscription != message.message {
-				delete(subscriptions, message.message)
-				handleNewSubscription(message.message, conn)
-			}
+			unsubscribeClien(client)
+			handleNewSubscription(message.Message, client)
 		case UNSUBSCRIBE:
-			delete(subscriptions, message.message)
+			unsubscribeClien(client)
 		case MESSAGE:
-			for _, v := range subscriptions[p.subscription][p.lobbyId].players {
-				if p != v {
-					if w, err := p.conn.NextWriter(websocket.TextMessage); err != nil {
-						return
-					} else {
-						w.Write([]byte(message.message))
+			println("Message from client: ", message.Message)
+			for _, c := range rooms[client.subscription][client.lobby].clients {
+				if c != client && c != nil && c.conn != nil {
+					if c.send(message) != nil {
+						println("Client left!")
+						c.conn.Close();
+						rooms[client.subscription][client.lobby].removeClient(c)
 					}
 				}
 			}
 		}
-
 	}
 }
 
-func handleNewSubscription(subscription string, conn *websocket.Conn) {
-	p := connections[conn]
-	avalibleLobbies := subscriptions[p.subscription]
-	if avalibleLobbies != nil && len(avalibleLobbies) > 0 {
-		avalibleLobbies[0].players = append(avalibleLobbies[0].players, p);
+func (c *Client) send(v interface{}) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.conn.WriteJSON(v)
+}
+
+func handleNewSubscription(subscription string, client *Client) {
+	var newLobby *lobby
+	availableLobbies, ok := rooms[subscription]
+	if availableLobbies != nil && len(availableLobbies) > 0 && ok {
+		newLobby = getFreeLobbyForSubscription(subscription)
 	} else {
-		avalibleLobbies = []lobby{lobby{id: 0, players: []*player{p}}}
+		if availableLobbies == nil || !ok {
+			availableLobbies = make(map[string]*lobby)
+			rooms[subscription] = availableLobbies
+		}
+		newLobby = &lobby{id: "ROOM-0", capacity: 16}
+		availableLobbies["ROOM-0"] = newLobby
 	}
-	p.subscription = subscription
-	p.lobbyId = 0
+	newLobby.addClient(client)
+	client.lobby = newLobby.id
+	client.subscription = subscription
+}
+
+func getFreeLobbyForSubscription(subscription string) *lobby {
+	for _, v := range rooms[subscription] {
+		if v.canClientJoin() {
+			return v
+		}
+	}
+	newLobby := lobby{id: "ROOM-0" + strconv.Itoa(len(rooms[subscription])), capacity: 16}
+	rooms[subscription][newLobby.id] = &newLobby
+
+	return &newLobby
+}
+
+func unsubscribeClien(client *Client) {
+	lobbies, ok := rooms[client.subscription]
+	if (ok) {
+		l, ok := lobbies[client.lobby]
+		if (ok) {
+			l.removeClient(client)
+			client.subscription = "main"
+			client.lobby = "0"
+		}
+	}
+
 }
